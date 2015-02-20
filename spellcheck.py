@@ -1,136 +1,95 @@
-#!/usr/bin/env python
-# -*- coding: utf-8 -*-
-"""
-spellchecker
+import argparse
 
-Usage:
-    ./spellcheck.py
-
-Requirements:
-    Python 2.7
-    Uses /usr/share/dict/words for word list
-
-@author: kristi
-"""
-
-import re
 from collections import defaultdict
+
 from cmd import Cmd
 
+import re
 
-VOWEL = set("aeiouy")
+
 VOWEL_RE = re.compile(r'[aeiouy]')
 REPEAT_RE = re.compile(r'(.)\1+')
 
 
-def toPattern(word):
-    def toUpper(matchobj):
-        return matchobj.group(1).upper()
-    pattern = word
+def hash_word(word):
     # Vowels get replaced with 'A'
-    pattern = VOWEL_RE.sub('A', pattern)
+    word = VOWEL_RE.sub('A', word)
     # Repeated letters are replaced with a single letter
-    pattern = REPEAT_RE.sub(r'\1', pattern)
-
-    return pattern
-
-
-def tokenize(word):
-    """
-    Split word by repeated character.  Vowels get lumped together.
-
-    >>> tokenize('oreooo')
-    ['o', 'r', 'eooo']
-    """
-    return [m.group(0) for m in re.finditer(r'[aeiouy]+|(.)\1*', word)]
+    word = REPEAT_RE.sub(r'\1', word)
+    return word
 
 
-def pick_suggestion(word, candidates):
-    """
-    Pick best candidate word using a simple heuristic score
+def pick_suggestion(input_word, candidate_word_lst, candidate_word_vowel_stat_lst):
+    input_word_vowel_stat = vowels_stat(input_word)
+    dct = {}
+    for candidate_word, candidate_word_vowel_stat in zip(candidate_word_lst, candidate_word_vowel_stat_lst):
+        dct[candidate_word] = sum(abs(x-y) for x, y in zip(input_word_vowel_stat, candidate_word_vowel_stat))
+    return min(dct, key=lambda key: dct[key])
 
-    Alternate scoring methodologies include:
 
-    Python's get_close_matches string similarity via SequenceMatcher's
-        Ratcliff-Obershelp based algorithm
-        difflib.get_close_matches(word, candidates, n=1, cutoff=0.0)[0]
-        http://docs.python.org/library/difflib.html#difflib.SequenceMatcher
-        http://hg.python.org/cpython/file/70274d53c1dd/Lib/difflib.py
-
-    Levenshtein distance or edit distance
-        http://en.wikipedia.org/wiki/Levenshtein_distance
-
-    Using a hidden markov model for each candidate
-        http://en.wikipedia.org/wiki/Viterbi_algorithm
-        http://en.wikipedia.org/wiki/Forward-backward_algorithm
-    """
-    word_tokens = tokenize(word)
-    suggestion = None
-    best_score = 0
-    for candidate in candidates:
-        candidate_tokens = tokenize(candidate)
-        score = 1.0
-        for w, c in zip(word_tokens, candidate_tokens):
-            set_w = set(w)
-            set_c = set(c)
-            # Don't choose words with fewer letters
-            if len(w) < len(c):
-                score = 0
-                break
-            if w == c:
-                score += len(c)
-            else:
-                # penalize changing vowels
-                factor = (len(set_w & set_c) + 1) / (len(set_c) + 1.0)
-                # small penalization for repeating letters
-                factor *= 10 / (len(w) - len(c) + 10.0)
-                score += factor * 0.8
-        if score > best_score:
-            best_score = score
-            suggestion = candidate
-    return suggestion
+def vowels_stat(word):
+    return [len(m.group(0)) for m in re.finditer(r'[aeiouy]+', word)]
 
 
 class SpellCmd(Cmd):
-    def __init__(self, wordfile):
+
+    NO_SUGGESTION = 'NO SUGGESTION'
+
+    prompt = '> '
+    intro = """
+    Spellchecking util. Will print corrected word or `{no_suggestion}` string if no corrections can be performed.
+    """.format(
+        no_suggestion=NO_SUGGESTION
+    )
+
+    def _prepare_word(self, word):
+        return str(word).strip().lower()
+
+    def __init__(self, dict_file_name):
         Cmd.__init__(self)
-        self.prompt = "> "
-        self.intro = "Spell checker thing.  Enter some words."
-        self.wordfile = wordfile
 
-        self.words = dict.fromkeys(
-            (line.strip().lower() for line in open(wordfile)), 1)
+        with open(dict_file_name, 'r') as f:
+            self.word_lst = [self._prepare_word(line) for line in f]
 
-        self.approx = defaultdict(set)
-        for word in self.words.iterkeys():
-            pattern = toPattern(word)
-            self.approx[pattern].add(word)
+        self.word_hash_dct = defaultdict(set)
+        self.vowel_stat_dct = {}
 
-    def emptyline(self):
-        pass
+        for word in self.word_lst:
+            word_hash = hash_word(word)
+            self.word_hash_dct[word_hash].add(word)
+        for word_hash in self.word_hash_dct:
+            self.vowel_stat_dct[word_hash] = map(
+                lambda w: vowels_stat(w),
+                self.word_hash_dct[word_hash]
+            )
+            import ipdb; ipdb.set_trace()  # XXX BREAKPOINT
 
     def default(self, line):
-        if line == "EOF":
-            exit(0)
-        word = line.strip().lower()
-        patt = toPattern(word)
-
-        if word in self.words:
-            print word
-        elif patt in self.approx:
-            candidates = self.approx[patt]
-            suggestion = pick_suggestion(word, candidates)
+        word = self._prepare_word(line)
+        word_hash = hash_word(word)
+        if word in self.word_lst:
+            print(word)
+        elif word_hash in self.word_hash_dct:
+            candidate_lst = self.word_hash_dct[word_hash]
+            candidate_vowel_stat_lst = self.vowel_stat_dct[word_hash]
+            suggestion = pick_suggestion(word, candidate_lst, candidate_vowel_stat_lst)
             if suggestion:
-                print suggestion
+                print(suggestion)
             else:
-                print "NO SUGGESTION"
+                print(self.NO_SUGGESTION)
         else:
-            print "NO SUGGESTION"
+            print(self.NO_SUGGESTION)
 
 
-if __name__ == "__main__":
-    #wordfile = "words.txt"
-    wordfile = "/usr/share/dict/words"
-
-    sc = SpellCmd(wordfile)
-    sc.cmdloop()
+if __name__ == '__main__':
+    parser = argparse.ArgumentParser()
+    parser.add_argument(
+        '-f',
+        '--dict-file-name',
+        action='store',
+        dest='dict_file_name',
+        default='words.txt',
+        help='File with the BIG dictionary with english words'
+    )
+    options = vars(parser.parse_args())
+    SpellCmd(**options).cmdloop()
