@@ -62,7 +62,6 @@ class SpellCmd(Cmd):
                 lambda w: vowels_stat(w),
                 self.word_hash_dct[word_hash]
             )
-            import ipdb; ipdb.set_trace()  # XXX BREAKPOINT
 
     def default(self, line):
         word = self._prepare_word(line)
